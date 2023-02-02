@@ -171,9 +171,8 @@ namespace loglib
         const auto now = std::chrono::system_clock::now();
         std::time_t const tmNow = std::chrono::system_clock::to_time_t(now);
         auto const ms = duration_cast<std::chrono::milliseconds>(now.time_since_epoch()) % 1000;
-        std::fstream logFile("application.log", std::ios::app);
-        logFile << std::endl;
-        logFile << std::put_time(std::gmtime(&tmNow), "%Y-%m-%dT%H:%M:%S.") << std::setw(3) << std::setfill('0') << std::to_string(ms.count()) << " ";
+        LogStream ls("application.log");
+        ls << std::put_time(std::gmtime(&tmNow), "%Y-%m-%dT%H:%M:%S.") << std::setw(3) << std::setfill('0') << std::to_string(ms.count()) << " ";
         for (auto const &defaultTag : getDefaultTags())
         {
             if (std::find_if(tags.begin(), tags.end(),
@@ -182,15 +181,15 @@ namespace loglib
                                  return defaultTag.first == tag->key();
                              }) == tags.end())
             {
-                logFile << " " << defaultTag.second->text();
+                ls << " " << defaultTag.second->text();
             }
         }
         for (auto const &tag : tags)
         {
-            logFile << " " << tag->text();
+            ls << " " << tag->text();
         }
-        logFile << " ";
-        return logFile;
+        ls << " ";
+        return ls;
     }
 
     inline auto log(Tag const &tag1)
