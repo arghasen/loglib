@@ -32,24 +32,57 @@ namespace loglib
             : mKey(key), mText(key + "=\"" + value + "\"")
         {
         }
+        Tag(std::string const &key, int value)
+            : mKey(key), mText(key + "=" + std::to_string(value))
+        {
+        }
+        Tag(std::string const &key, long long value)
+            : mKey(key), mText(key + "=" + std::to_string(value))
+        {
+        }
+        Tag(std::string const &key, double value)
+            : mKey(key), mText(key + "=" + std::to_string(value))
+        {
+        }
+        Tag(std::string const &key, bool value)
+            : mKey(key), mText(key + "=" + (value ? "true" : "false"))
+        {
+        }
 
     private:
         std::string mKey;
         std::string const mText;
     };
 
-    class LogLevel : public Tag
+    template <typename T, typename ValueT>
+    class TagType : public Tag
     {
     public:
-        LogLevel(std::string const &text)
-            : Tag("log_level", text)
-        {
-        }
-
         std::unique_ptr<Tag> clone() const override
         {
             return std::unique_ptr<Tag>(
-                new LogLevel(*this));
+                new T(*static_cast<T const *>(this)));
+        }
+        ValueT value() const
+        {
+            return mValue;
+        }
+
+    protected:
+        TagType(ValueT const &value)
+            : Tag(T::key, value), mValue(value)
+        {
+        }
+        ValueT mValue;
+    };
+
+    class LogLevel : public TagType<LogLevel, std::string>
+    {
+    public:
+        static constexpr char key[] = "log_level";
+        LogLevel(std::string const &value)
+            : TagType(value)
+        {
         }
     };
     inline std::string to_string(Tag const &tag)
@@ -67,7 +100,72 @@ namespace loglib
         auto &tags = getDefaultTags();
         tags[tag.key()] = tag.clone();
     }
+    struct FilterClause
+    {
+        std::vector<std::unique_ptr<Tag>> normalLiterals;
+        std::vector<std::unique_ptr<Tag>> invertedLiterals;
+    };
+    inline std::map<int, FilterClause> &getFilterClauses()
+    {
+        static std::map<int, FilterClause> clauses;
+        return clauses;
+    }
+    inline int createFilterClause()
+    {
+        static int currentId = 0;
+        ++currentId;
+        auto &clauses = getFilterClauses();
+        clauses[currentId] = FilterClause();
+        return currentId;
+    }
 
+    inline void addFilterLiteral(int filterId,
+                                 Tag const &tag,
+                                 bool normal = true)
+    {
+        auto &clauses = getFilterClauses();
+        if (clauses.contains(filterId))
+        {
+            if (normal)
+            {
+                clauses[filterId].normalLiterals.push_back(
+                    tag.clone());
+            }
+            else
+            {
+                clauses[filterId].invertedLiterals.push_back(
+                    tag.clone());
+            }
+        }
+    }
+
+    inline void clearFilterClause(int filterId)
+    {
+        auto &clauses = getFilterClauses();
+        clauses.erase(filterId);
+    }
+
+    class LogStream : public std::fstream
+    {
+    public:
+        LogStream(std::string const &filename,
+                  std::ios_base::openmode mode = ios_base::app)
+            : std::fstream(filename, mode)
+        {
+        }
+        LogStream(LogStream const &other) = delete;
+        LogStream(LogStream &&other)
+            : std::fstream(std::move(other))
+        {
+        }
+        ~LogStream()
+        {
+            *this << std::endl;
+        }
+
+        LogStream &operator=(LogStream const &rhs) = delete;
+        LogStream &operator=(LogStream &&rhs) = delete;
+    };
     inline std::fstream log(std::vector<Tag const *> tags = {})
     {
         const auto now = std::chrono::system_clock::now();
@@ -110,5 +208,9 @@ namespace loglib
     {
         return log({&tag1, &tag2, &tag3});
     }
-
+    inline std::fstream &operator<<(std::fstream &&stream, Tag const &tag)
+    {
+        stream << to_string(tag);
+        return stream;
+    }
 }
