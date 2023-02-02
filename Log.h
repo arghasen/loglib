@@ -9,6 +9,7 @@
 #include <vector>
 #include <sstream>
 #include <ostream>
+#include <filesystem>
 
 namespace loglib
 {
@@ -342,18 +343,120 @@ namespace loglib
         clauses.erase(filterId);
     }
 
+    class Output
+    {
+    public:
+        virtual ~Output() = default;
+        Output(Output const &other) = delete;
+        Output(Output &&other) = delete;
+        virtual std::unique_ptr<Output> clone() const = 0;
+        virtual void sendLine(std::string const &line) = 0;
+        Output &operator=(Output const &rhs) = delete;
+        Output &operator=(Output &&rhs) = delete;
+
+    protected:
+        Output() = default;
+    };
+
+    inline std::vector<std::unique_ptr<Output>> &getOutputs()
+    {
+        static std::vector<std::unique_ptr<Output>> outputs;
+        return outputs;
+    }
+    inline void addLogOutput(Output const &output)
+    {
+        auto &outputs = getOutputs();
+        outputs.push_back(output.clone());
+    }
+
+    class FileOutput : public Output
+    {
+    public:
+        FileOutput(std::string_view dir)
+            : mOutputDir(dir),
+              mFileNamePattern("{}"),
+              mMaxSize(0),
+              mRolloverCount(0)
+        {
+        }
+        FileOutput(FileOutput const &rhs)
+            : mOutputDir(rhs.mOutputDir),
+              mFileNamePattern(rhs.mFileNamePattern),
+              mMaxSize(rhs.mMaxSize),
+              mRolloverCount(rhs.mRolloverCount)
+        {
+        }
+        FileOutput(FileOutput &&rhs)
+            : mOutputDir(rhs.mOutputDir),
+              mFileNamePattern(rhs.mFileNamePattern),
+              mMaxSize(rhs.mMaxSize),
+              mRolloverCount(rhs.mRolloverCount),
+              mFile(std::move(rhs.mFile))
+        {
+        }
+        ~FileOutput()
+        {
+            mFile.close();
+        }
+        std::unique_ptr<Output> clone() const override
+        {
+            return std::unique_ptr<Output>(
+                new FileOutput(*this));
+        }
+        void sendLine(std::string const &line) override
+        {
+            if (not mFile.is_open())
+            {
+                mFile.open("application.log", std::ios::app);
+            }
+            mFile << line << std::endl;
+            mFile.flush();
+        }
+
+    protected:
+        std::filesystem::path mOutputDir;
+        std::string mFileNamePattern;
+        std::size_t mMaxSize;
+        unsigned int mRolloverCount;
+        std::fstream mFile;
+    };
+
+    class StreamOutput : public Output
+    {
+    public:
+        StreamOutput(std::ostream &stream)
+            : mStream(stream)
+        {
+        }
+        StreamOutput(StreamOutput const &rhs)
+            : mStream(rhs.mStream)
+        {
+        }
+        std::unique_ptr<Output> clone() const override
+        {
+            return std::unique_ptr<Output>(
+                new StreamOutput(*this));
+        }
+        void sendLine(std::string const &line) override
+        {
+            mStream << line << std::endl;
+        }
+
+    protected:
+        std::ostream &mStream;
+    };
+
     class LogStream : public std::stringstream
     {
     public:
-        LogStream(std::string const &filename,
-                  std::ios_base::openmode mode = ios_base::app)
-            : mProceed(true), mFile(filename, mode)
+        LogStream()
+            : mProceed(true)
         {
         }
         LogStream(LogStream const &other) = delete;
         LogStream(LogStream &&other)
             : std::stringstream(std::move(other)),
-              mProceed(other.mProceed), mFile(std::move(other.mFile))
+              mProceed(other.mProceed)
         {
         }
         ~LogStream()
@@ -362,8 +465,11 @@ namespace loglib
             {
                 return;
             }
-            mFile << this->str();
-            mFile << std::endl;
+            auto &outputs = getOutputs();
+            for (auto const &output : outputs)
+            {
+                output->sendLine(this->str());
+            }
         }
         LogStream &operator=(LogStream const &rhs) = delete;
         LogStream &operator=(LogStream &&rhs) = delete;
@@ -382,7 +488,7 @@ namespace loglib
         const auto now = std::chrono::system_clock::now();
         std::time_t const tmNow = std::chrono::system_clock::to_time_t(now);
         auto const ms = duration_cast<std::chrono::milliseconds>(now.time_since_epoch()) % 1000;
-        LogStream ls("application.log");
+        LogStream ls;
         ls << std::put_time(std::gmtime(&tmNow), "%Y-%m-%dT%H:%M:%S.") << std::setw(3) << std::setfill('0') << std::to_string(ms.count()) << " ";
         std::map<std::string, Tag const *> activeTags;
 
