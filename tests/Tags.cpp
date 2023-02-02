@@ -117,3 +117,32 @@ TEST("Overridden default tag not used to filter messages")
     bool result = Util::isTextInFile(message, "application.log");
     CONFIRM_FALSE(result);
 }
+
+TEST("Inverted tag can be used to filter messages")
+{
+    TDDLib::SetupAndTeardown<TempFilterClause> filter;
+    loglib::addFilterLiteral(filter.id(), green, false);
+    std::string message = "inverted ";
+    message += Util::randomString();
+    loglib::log(info) << message;
+    bool result = Util::isTextInFile(message, "application.log");
+    CONFIRM_FALSE(result);
+}
+
+TEST("Tag values can be used to filter messages")
+{
+    TDDLib::SetupAndTeardown<TempFilterClause> filter;
+    loglib::addFilterLiteral(filter.id(),
+                             Count(100, loglib::TagOperation::GreaterThan));
+    std::string message = "values ";
+    message += Util::randomString();
+    loglib::log(Count(1)) << message;
+    bool result = Util::isTextInFile(message, "application.log");
+    CONFIRM_FALSE(result);
+    loglib::log() << Count(101) << message;
+    result = Util::isTextInFile(message, "application.log");
+    CONFIRM_FALSE(result);
+    loglib::log(Count(101)) << message;
+    result = Util::isTextInFile(message, "application.log");
+    CONFIRM_TRUE(result);
+}

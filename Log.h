@@ -26,6 +26,7 @@ namespace loglib
         }
 
         virtual std::unique_ptr<Tag> clone() const = 0;
+        virtual bool match(Tag const &other) const = 0;
 
     protected:
         Tag(std::string const &key, std::string const &value)
@@ -54,6 +55,16 @@ namespace loglib
         std::string const mText;
     };
 
+    enum class TagOperation
+    {
+        None,
+        Equal,
+        LessThan,
+        LessThanOrEqual,
+        GreaterThan,
+        GreaterThanOrEqual
+    };
+
     template <typename T, typename ValueT>
     class TagType : public Tag
     {
@@ -68,23 +79,209 @@ namespace loglib
             return mValue;
         }
 
+        bool match(Tag const &other) const override
+        {
+            if (key() != other.key())
+            {
+                return false;
+            }
+            TagType const &otherCast = static_cast<TagType const &>(other);
+            if (mOperation == TagOperation::None)
+            {
+                switch (otherCast.mOperation)
+                {
+                case TagOperation::None:
+                    return mValue == otherCast.mValue;
+                default:
+                    return compareTagTypes(mValue,
+                                           otherCast.mOperation,
+                                           otherCast.mValue);
+                }
+            }
+            switch (otherCast.mOperation)
+            {
+            case TagOperation::None:
+                return compareTagTypes(otherCast.mValue,
+                                       mOperation,
+                                       mValue);
+            default:
+                return false;
+            }
+        }
+
     protected:
-        TagType(ValueT const &value)
-            : Tag(T::key, value), mValue(value)
+        TagType(ValueT const &value,
+                TagOperation operation)
+            : Tag(T::key, value), mValue(value), mOperation(operation)
         {
         }
+        virtual bool compareTagTypes(ValueT const &value,
+                                     TagOperation operation,
+                                     ValueT const &criteria) const
+        {
+            return false;
+        }
         ValueT mValue;
+        TagOperation mOperation;
     };
 
-    class LogLevel : public TagType<LogLevel, std::string>
+    template <typename T>
+    class StringTagType : public TagType<T, std::string>
+    {
+    protected:
+        StringTagType(std::string const &value,
+                      TagOperation operation)
+            : TagType<T, std::string>(value, operation)
+        {
+        }
+        bool compareTagTypes(std::string const &value,
+                             TagOperation operation,
+                             std::string const &criteria) const override
+        {
+            int result = value.compare(criteria);
+            switch (operation)
+            {
+            case TagOperation::Equal:
+                return result == 0;
+            case TagOperation::LessThan:
+                return result == -1;
+            case TagOperation::LessThanOrEqual:
+                return result == 0 || result == -1;
+            case TagOperation::GreaterThan:
+                return result == 1;
+            case TagOperation::GreaterThanOrEqual:
+                return result == 0 || result == 1;
+            default:
+                return false;
+            }
+        }
+    };
+
+    template <typename T>
+    class IntTagType : public TagType<T, int>
+    {
+    protected:
+        IntTagType(int const &value,
+                   TagOperation operation)
+            : TagType<T, int>(value, operation)
+        {
+        }
+        bool compareTagTypes(int const &value,
+                             TagOperation operation,
+                             int const &criteria) const override
+        {
+            switch (operation)
+            {
+            case TagOperation::Equal:
+                return value == criteria;
+            case TagOperation::LessThan:
+                return value < criteria;
+            case TagOperation::LessThanOrEqual:
+                return value <= criteria;
+            case TagOperation::GreaterThan:
+                return value > criteria;
+            case TagOperation::GreaterThanOrEqual:
+                return value >= criteria;
+            default:
+                return false;
+            }
+        }
+    };
+
+    template <typename T>
+    class LongLongTagType : public TagType<T, long long>
+    {
+    protected:
+        LongLongTagType(long long const &value,
+                        TagOperation operation)
+            : TagType<T, long long>(value, operation)
+        {
+        }
+        bool compareTagTypes(long long const &value,
+                             TagOperation operation,
+                             long long const &criteria) const override
+        {
+            switch (operation)
+            {
+            case TagOperation::Equal:
+                return value == criteria;
+            case TagOperation::LessThan:
+                return value < criteria;
+            case TagOperation::LessThanOrEqual:
+                return value <= criteria;
+            case TagOperation::GreaterThan:
+                return value > criteria;
+            case TagOperation::GreaterThanOrEqual:
+                return value >= criteria;
+            default:
+                return false;
+            }
+        }
+    };
+
+    template <typename T>
+    class DoubleTagType : public TagType<T, double>
+    {
+    protected:
+        DoubleTagType(double const &value,
+                      TagOperation operation)
+            : TagType<T, double>(value, operation)
+        {
+        }
+        bool compareTagTypes(double const &value,
+                             TagOperation operation,
+                             double const &criteria) const override
+        {
+            switch (operation)
+            {
+            case TagOperation::Equal:
+                return value == criteria;
+            case TagOperation::LessThan:
+                return value < criteria;
+            case TagOperation::LessThanOrEqual:
+                return value <= criteria;
+            case TagOperation::GreaterThan:
+                return value > criteria;
+            case TagOperation::GreaterThanOrEqual:
+                return value >= criteria;
+            default:
+                return false;
+            }
+        }
+    };
+    template <typename T>
+    class BoolTagType : public TagType<T, bool>
+    {
+    protected:
+        BoolTagType(bool const &value,
+                    TagOperation operation)
+            : TagType<T, bool>(value, operation)
+        {
+        }
+        bool compareTagTypes(bool const &value,
+                             TagOperation operation,
+                             bool const &criteria) const override
+        {
+            switch (operation)
+            {
+            case TagOperation::Equal:
+                return value == criteria;
+            default:
+                return false;
+            }
+        }
+    };
+    class LogLevel : public StringTagType<LogLevel>
     {
     public:
         static constexpr char key[] = "log_level";
-        LogLevel(std::string const &value)
-            : TagType(value)
+        LogLevel(std::string const &value,
+                 TagOperation operation = TagOperation::None)
+            : StringTagType(value, operation)
         {
         }
     };
+
     inline std::string to_string(Tag const &tag)
     {
         return tag.text();
@@ -217,8 +414,7 @@ namespace loglib
                     allLiteralsMatch = false;
                     break;
                 }
-                if (activeTags[normal->key()]->text() !=
-                    normal->text())
+                if (not activeTags[normal->key()]->match(*normal))
                 {
                     allLiteralsMatch = false;
                     break;
@@ -234,12 +430,10 @@ namespace loglib
                 // not present or has a mismatched value.
                 if (activeTags.contains(inverted->key()))
                 {
-                    if (activeTags[inverted->key()]->text() !=
-                        inverted->text())
+                    if (activeTags[inverted->key()]->match(*inverted))
                     {
-                        break;
+                        allLiteralsMatch = false;
                     }
-                    allLiteralsMatch = false;
                     break;
                 }
             }
