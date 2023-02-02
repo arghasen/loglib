@@ -1,14 +1,14 @@
 #pragma once
 
 #include <fstream>
-#include <iostream>
 #include <chrono>
 #include <iomanip>
 #include <ctime>
 #include <map>
 #include <memory>
 #include <vector>
-#include <algorithm>
+#include <sstream>
+#include <ostream>
 
 namespace loglib
 {
@@ -145,50 +145,115 @@ namespace loglib
         clauses.erase(filterId);
     }
 
-    class LogStream : public std::fstream
+    class LogStream : public std::stringstream
     {
     public:
         LogStream(std::string const &filename,
                   std::ios_base::openmode mode = ios_base::app)
-            : std::fstream(filename, mode)
+            : mProceed(true), mFile(filename, mode)
         {
         }
         LogStream(LogStream const &other) = delete;
         LogStream(LogStream &&other)
-            : std::fstream(std::move(other))
+            : std::stringstream(std::move(other)),
+              mProceed(other.mProceed), mFile(std::move(other.mFile))
         {
         }
         ~LogStream()
         {
-            *this << std::endl;
+            if (not mProceed)
+            {
+                return;
+            }
+            mFile << this->str();
+            mFile << std::endl;
         }
-
         LogStream &operator=(LogStream const &rhs) = delete;
         LogStream &operator=(LogStream &&rhs) = delete;
+        void ignore()
+        {
+            mProceed = false;
+        }
+
+    private:
+        bool mProceed;
+        std::fstream mFile;
     };
-    inline std::fstream log(std::vector<Tag const *> tags = {})
+
+    inline LogStream log(std::vector<Tag const *> tags = {})
     {
         const auto now = std::chrono::system_clock::now();
         std::time_t const tmNow = std::chrono::system_clock::to_time_t(now);
         auto const ms = duration_cast<std::chrono::milliseconds>(now.time_since_epoch()) % 1000;
         LogStream ls("application.log");
         ls << std::put_time(std::gmtime(&tmNow), "%Y-%m-%dT%H:%M:%S.") << std::setw(3) << std::setfill('0') << std::to_string(ms.count()) << " ";
+        std::map<std::string, Tag const *> activeTags;
+
         for (auto const &defaultTag : getDefaultTags())
         {
-            if (std::find_if(tags.begin(), tags.end(),
-                             [&defaultTag](auto const &tag)
-                             {
-                                 return defaultTag.first == tag->key();
-                             }) == tags.end())
-            {
-                ls << " " << defaultTag.second->text();
-            }
+            activeTags[defaultTag.first] = defaultTag.second.get();
         }
         for (auto const &tag : tags)
         {
-            ls << " " << tag->text();
+            activeTags[tag->key()] = tag;
+        }
+        for (auto const &activeEntry : activeTags)
+        {
+            ls << " " << activeEntry.second->text();
         }
         ls << " ";
+
+        bool proceed = true;
+        for (auto const &clause : getFilterClauses())
+        {
+            proceed = false;
+            bool allLiteralsMatch = true;
+            for (auto const &normal : clause.second.normalLiterals)
+            {
+                // We need to make sure that the tag is
+                // present and with the correct value.
+                if (not activeTags.contains(normal->key()))
+                {
+                    allLiteralsMatch = false;
+                    break;
+                }
+                if (activeTags[normal->key()]->text() !=
+                    normal->text())
+                {
+                    allLiteralsMatch = false;
+                    break;
+                }
+            }
+            if (not allLiteralsMatch)
+            {
+                continue;
+            }
+            for (auto const &inverted : clause.second.invertedLiterals)
+            {
+                // We need to make sure that the tag is either
+                // not present or has a mismatched value.
+                if (activeTags.contains(inverted->key()))
+                {
+                    if (activeTags[inverted->key()]->text() !=
+                        inverted->text())
+                    {
+                        break;
+                    }
+                    allLiteralsMatch = false;
+                    break;
+                }
+            }
+            if (allLiteralsMatch)
+            {
+                proceed = true;
+                break;
+            }
+        }
+        if (not proceed)
+        {
+            ls.ignore();
+        }
+
         return ls;
     }
 
@@ -207,7 +272,7 @@ namespace loglib
     {
         return log({&tag1, &tag2, &tag3});
     }
-    inline std::fstream &operator<<(std::fstream &&stream, Tag const &tag)
+    inline std::ostream &operator<<(std::ostream &&stream, Tag const &tag)
     {
         stream << to_string(tag);
         return stream;
