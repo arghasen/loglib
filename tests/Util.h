@@ -23,7 +23,9 @@ namespace Util
 
     inline bool isTextInFile(
         std::string_view text,
-        std::string_view fileName)
+        std::string_view fileName,
+        std::vector<std::string> const &wantedTags = {},
+        std::vector<std::string> const &unwantedTags = {})
     {
         std::ifstream logfile(fileName.data());
         std::string line;
@@ -31,6 +33,21 @@ namespace Util
         {
             if (line.find(text) != std::string::npos)
             {
+                for (auto const &tag : wantedTags)
+                {
+                    if (line.find(tag) == std::string::npos)
+                    {
+                        return false;
+                    }
+                }
+
+                for (auto const &tag : unwantedTags)
+                {
+                    if (line.find(tag) != std::string::npos)
+                    {
+                        return false;
+                    }
+                }
                 return true;
             }
         }

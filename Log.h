@@ -5,6 +5,10 @@
 #include <chrono>
 #include <iomanip>
 #include <ctime>
+#include <map>
+#include <memory>
+#include <vector>
+#include <algorithm>
 
 namespace loglib
 {
@@ -20,6 +24,8 @@ namespace loglib
         {
             return mText;
         }
+
+        virtual std::unique_ptr<Tag> clone() const = 0;
 
     protected:
         Tag(std::string const &key, std::string const &value)
@@ -39,13 +45,30 @@ namespace loglib
             : Tag("log_level", text)
         {
         }
+
+        std::unique_ptr<Tag> clone() const override
+        {
+            return std::unique_ptr<Tag>(
+                new LogLevel(*this));
+        }
     };
     inline std::string to_string(Tag const &tag)
     {
         return tag.text();
     }
 
-    inline std::fstream log(std::string_view preMessage = "")
+    inline std::map<std::string, std::unique_ptr<Tag>> &getDefaultTags()
+    {
+        static std::map<std::string, std::unique_ptr<Tag>> tags;
+        return tags;
+    }
+    inline void addDefaultTag(Tag const &tag)
+    {
+        auto &tags = getDefaultTags();
+        tags[tag.key()] = tag.clone();
+    }
+
+    inline std::fstream log(std::vector<Tag const *> tags = {})
     {
         const auto now = std::chrono::system_clock::now();
         std::time_t const tmNow = std::chrono::system_clock::to_time_t(now);
@@ -53,12 +76,39 @@ namespace loglib
         std::fstream logFile("application.log", std::ios::app);
         logFile << std::endl;
         logFile << std::put_time(std::gmtime(&tmNow), "%Y-%m-%dT%H:%M:%S.") << std::setw(3) << std::setfill('0') << std::to_string(ms.count()) << " ";
-        logFile << preMessage << " ";
+        for (auto const &defaultTag : getDefaultTags())
+        {
+            if (std::find_if(tags.begin(), tags.end(),
+                             [&defaultTag](auto const &tag)
+                             {
+                                 return defaultTag.first == tag->key();
+                             }) == tags.end())
+            {
+                logFile << " " << defaultTag.second->text();
+            }
+        }
+        for (auto const &tag : tags)
+        {
+            logFile << " " << tag->text();
+        }
+        logFile << " ";
         return logFile;
     }
 
-    inline std::fstream log(Tag const &tag)
+    inline auto log(Tag const &tag1)
     {
-        return log(to_string(tag));
+        return log({&tag1});
     }
+    inline auto log(Tag const &tag1,
+                    Tag const &tag2)
+    {
+        return log({&tag1, &tag2});
+    }
+    inline auto log(Tag const &tag1,
+                    Tag const &tag2,
+                    Tag const &tag3)
+    {
+        return log({&tag1, &tag2, &tag3});
+    }
+
 }
